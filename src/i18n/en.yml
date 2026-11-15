@@ -1,0 +1,54 @@
+# English locale for Venera.
+app.name: VENERA
+start.title: Context engine for code
+start.hint: Enter — start · /project — choose a project
+project.none: "project: none"
+project.title: project
+project.prompt: paste the project path
+project.hint: Enter — open · Esc — cancel
+header.files: files
+header.symbols: sym
+header.session: session
+help.help: show this list
+help.index: refresh the project index
+help.map: print the budgeted project map
+help.vce: refresh the index and render the map in one step
+help.context: prepare context for a request
+help.search: search files and symbols
+help.outline: list the symbols of a file
+help.cat: read a verified file range
+help.deps: imports and importers
+help.cache: cache statistics
+help.cache-clear: drop cached contexts
+help.skills: list skills
+help.skill: show one skill
+help.model: pick a model from the list
+help.models: list available models
+help.provider: choose an aggregator and its key
+help.api: aggregators and masked keys
+help.vault: reset the master password and delete every key
+api.title: API key
+api.prompt: paste the key and press Enter
+api.hint: stored in the keyring · Esc to cancel
+confirm.title: confirmation
+confirm.write: The AI wants to modify a file
+confirm.hint: Enter — allow · Esc — deny
+vault.title: key vault
+vault.create: choose a master password (min. 8)
+vault.repeat: repeat the password
+vault.unlock: enter the master password
+vault.hint_create: type a password (min. 8) and Enter · Esc — exit
+vault.hint_unlock: type the password and Enter · Esc — reset
+vault.reset_title: reset vault
+vault.reset_text: Every API key will be deleted permanently.
+vault.reset_hint: Enter — erase · Esc — cancel
+help.project: switch the project directory
+help.projects: browse project directories
+help.theme: switch the palette or list themes
+help.new: start a new session
+help.sessions: list stored sessions
+help.session: open a stored session
+help.cwd: show the project directory
+help.cost: show this session's spend
+help.clear: clear the transcript
+help.quit: leave the TUI

@@ -1,0 +1,38 @@
+# Build output
+/target
+
+# Venera index, generated context, portable sessions, and key vault
+.venera/
+/sessions/
+vault.json
+
+# Local logs
+*.log
+
+# Release artifact and local scratch
+/dist/
+/release/
+/test.txt
+*.exe
+*.pdb
+*.tmp
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Python / Node caches, if a helper project appears
+__pycache__/
+*.pyc
+.venv/
+node_modules/

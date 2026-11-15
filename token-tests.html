@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Venera · токены до и после</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14181d;
+    --panel-2: #1a1f26;
+    --line: #2a3038;
+    --text: #e8edf3;
+    --muted: #8a95a3;
+    --dim: #5e6875;
+    --accent: #ff8a3d;
+    --accent-soft: #ffb27a;
+    --ok: #6ee7a8;
+    --ok-soft: #19352a;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { background: var(--bg); }
+
+  body {
+    margin: 0;
+    color: var(--text);
+    background:
+      radial-gradient(900px 420px at 12% -10%, rgba(255, 138, 61, .16), transparent 60%),
+      radial-gradient(700px 360px at 100% 0%, rgba(110, 231, 168, .07), transparent 55%),
+      var(--bg);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.5;
+  }
+
+  main {
+    width: min(1080px, calc(100% - 40px));
+    margin: 0 auto;
+    padding: 54px 0 70px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    letter-spacing: .18em;
+    color: var(--accent-soft);
+    text-transform: uppercase;
+  }
+
+  .brand::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 18px var(--accent);
+  }
+
+  h1 {
+    margin: 18px 0 12px;
+    font-size: clamp(34px, 6vw, 64px);
+    line-height: .98;
+    letter-spacing: -.04em;
+    font-weight: 760;
+    max-width: 800px;
+  }
+
+  .lead {
+    margin: 0;
+    max-width: 720px;
+    color: var(--muted);
+    font-size: 17px;
+  }
+
+  .lead strong { color: var(--text); font-weight: 600; }
+
+  .hero {
+    margin-top: 34px;
+    display: grid;
+    grid-template-columns: 1fr 54px 1fr 1fr;
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .card {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px 20px 18px;
+    min-height: 154px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .card.accent {
+    border-color: rgba(255, 138, 61, .55);
+    box-shadow: 0 0 0 1px rgba(255, 138, 61, .08), 0 18px 50px rgba(0,0,0,.25);
+  }
+
+  .card.save {
+    border-color: rgba(110, 231, 168, .34);
+    background: linear-gradient(180deg, #132019, #101814);
+  }
+
+  .label {
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .value {
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(28px, 4vw, 42px);
+    font-weight: 750;
+    letter-spacing: -.04em;
+    line-height: 1;
+    margin: 10px 0 6px;
+  }
+
+  .card.accent .value { color: var(--accent); }
+  .card.save .value { color: var(--ok); }
+
+  .sub { color: var(--dim); font-size: 13px; }
+
+  .arrow {
+    display: grid;
+    place-items: center;
+    color: var(--accent);
+    font-size: 28px;
+    font-weight: 300;
+  }
+
+  .section {
+    margin-top: 34px;
+    border-top: 1px solid var(--line);
+    padding-top: 26px;
+  }
+
+  h2 {
+    margin: 0 0 6px;
+    font-size: 20px;
+    letter-spacing: -.02em;
+  }
+
+  .section p {
+    margin: 0 0 18px;
+    color: var(--muted);
+    max-width: 760px;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 620px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+  }
+
+  th {
+    color: var(--dim);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.num, th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.num { font-weight: 650; }
+  td.good { color: var(--ok); }
+
+  .bars {
+    display: grid;
+    gap: 18px;
+    margin-top: 22px;
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
+  }
+
+  .bar-row { display: grid; gap: 7px; }
+
+  .bar-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .bar-head strong { color: var(--text); font-weight: 600; }
+
+  .track {
+    height: 12px;
+    border-radius: 999px;
+    background: #0c0f13;
+    overflow: hidden;
+    border: 1px solid #222831;
+  }
+
+  .fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #ff6a1f, #ffb27a);
+  }
+
+  .fill.ok { background: linear-gradient(90deg, #2fbf78, #8bf0b8); }
+  .fill.tiny { min-width: 3px; }
+
+  .method {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .method div {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 15px 16px;
+    background: var(--panel);
+  }
+
+  .method b {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text);
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .method span { color: var(--muted); font-size: 12px; }
+
+  .note {
+    margin-top: 22px;
+    padding: 16px 18px;
+    border-left: 3px solid var(--accent);
+    background: rgba(255, 138, 61, .06);
+    color: var(--muted);
+    font-size: 14px;
+    border-radius: 0 10px 10px 0;
+  }
+
+  .note strong { color: var(--text); }
+
+  footer {
+    margin-top: 42px;
+    color: var(--dim);
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+  }
+
+  code {
+    color: var(--accent-soft);
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: .92em;
+  }
+
+  @media (max-width: 820px) {
+    .hero { grid-template-columns: 1fr 1fr; }
+    .arrow { display: none; }
+    .hero .card.save { grid-column: 1 / -1; }
+    .method { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 520px) {
+    main { width: min(100% - 24px, 1080px); padding-top: 34px; }
+    .hero { grid-template-columns: 1fr; }
+    .hero .card.save { grid-column: auto; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">Venera · token report</div>
+    <h1>Сколько токенов<br>съедает проект</h1>
+    <p class="lead">
+      Только токены. <strong>Без валюты:</strong> у провайдеров разные тарифы,
+      поэтому сравниваем чистый объём контекста.
+    </p>
+  </header>
+
+  <section class="hero" aria-label="Сценарий 150 тысяч против 6 тысяч токенов">
+    <article class="card">
+      <div class="label">до · весь проект</div>
+      <div class="value">150 000</div>
+      <div class="sub">токенов</div>
+    </article>
+
+    <div class="arrow" aria-hidden="true">→</div>
+
+    <article class="card accent">
+      <div class="label">после · VCE-карта</div>
+      <div class="value">6 000</div>
+      <div class="sub">токенов, бюджет карты</div>
+    </article>
+
+    <article class="card save">
+      <div class="label">экономия</div>
+      <div class="value">144 000</div>
+      <div class="sub">токенов · 96% меньше</div>
+    </article>
+  </section>
+
+  <section class="section">
+    <h2>Фактический замер репозитория</h2>
+    <p>
+      Цифры ниже сняты офлайн командой <code>venera measure</code> на этом проекте.
+      Карта ограничена бюджетом 6 000 токенов.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Что читаем</th>
+            <th class="num">Токены</th>
+            <th class="num">Отношение к карте</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Весь репозиторий, все текстовые файлы</td>
+            <td class="num">345 250</td>
+            <td class="num">57,6×</td>
+          </tr>
+          <tr>
+            <td>Только <code>src/</code></td>
+            <td class="num">232 857</td>
+            <td class="num">38,8×</td>
+          </tr>
+          <tr>
+            <td>VCE-карта, бюджет 6 000</td>
+            <td class="num">5 997</td>
+            <td class="num">1×</td>
+          </tr>
+          <tr>
+            <td>Карта + один файл целиком</td>
+            <td class="num">13 525</td>
+            <td class="num">2,3×</td>
+          </tr>
+          <tr>
+            <td>Экономия против всего репозитория</td>
+            <td class="num good">339 253</td>
+            <td class="num good">98,3%</td>
+          </tr>
+          <tr>
+            <td>Экономия против <code>src/</code></td>
+            <td class="num good">226 860</td>
+            <td class="num good">97,4%</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bars" aria-label="Сравнение объёма токенов">
+      <div class="bar-row">
+        <div class="bar-head">
+          <span>Весь репозиторий</span>
+          <strong>345 250</strong>
+        </div>
+        <div class="track"><div class="fill" style="width:100%"></div></div>
+      </div>
+
+      <div class="bar-row">
+        <div class="bar-head">
+          <span>VCE-карта</span>
+          <strong>5 997</strong>
+        </div>
+        <div class="track"><div class="fill ok tiny" style="width:1.74%"></div></div>
+      </div>
+
+      <div class="bar-row">
+        <div class="bar-head">
+          <span>Сценарий из задачи</span>
+          <strong>150 000 → 6 000</strong>
+        </div>
+        <div class="track"><div class="fill" style="width:4%"></div></div>
+      </div>
+    </div>
+
+    <div class="method">
+      <div>
+        <b>216</b>
+        <span>файлов в полном замере</span>
+      </div>
+      <div>
+        <b>3 198</b>
+        <span>символов в индексе</span>
+      </div>
+      <div>
+        <b>o200k_base</b>
+        <span>токенизатор, без API</span>
+      </div>
+    </div>
+
+    <p class="note">
+      <strong>Почему без денег.</strong> Один и тот же объём токенов может стоить
+      по-разному у разных провайдеров и моделей. Здесь нет ни одной цены:
+      только токены, чтобы сравнение оставалось честным.
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>Что это значит</h2>
+    <p>
+      Вместо чтения всего проекта модель получает структурную карту на ~6 000 токенов
+      и открывает только нужный файл. На этом репозитории карта в <strong>57,6 раза</strong>
+      меньше полного чтения; даже с одним файлом целиком — в <strong>25,5 раза</strong>
+      меньше, чем читать всё.
+    </p>
+    <p>
+      В сценарии 150 000 → 6 000 экономия составляет <strong>144 000 токенов</strong>,
+      или <strong>96%</strong>. Это не про деньги и не про конкретный тариф — это про то,
+      сколько контекста реально уходит в запрос.
+    </p>
+  </section>
+
+  <footer>
+    <span>Venera · offline token measurement</span>
+    <span>o200k_base · 2026-11-15</span>
+  </footer>
+</main>
+</body>
+</html>

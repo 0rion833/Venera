@@ -1,0 +1,10 @@
+# Source-local scratch files.
+# The repository-root .gitignore owns target/, dist/, .venera/, sessions/, and secrets.
+
+*.rs.bk
+*.orig
+*.rej
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db

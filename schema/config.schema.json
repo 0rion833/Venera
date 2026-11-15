@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://venera.local/schema/config.schema.json",
+  "title": "Venera config",
+  "description": "Prices are RUB per 1M tokens with VAT included. Unknown fields are rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["vendors"],
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vendor": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 }
+      }
+    },
+    "vendors": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/vendor" }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_budget_rub": { "type": "number", "exclusiveMinimum": 0 },
+        "max_output_tokens_per_turn": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "index": { "$ref": "#/definitions/index" },
+    "context": { "$ref": "#/definitions/context" }
+  },
+  "definitions": {
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "default_strategy": {
+          "type": "string",
+          "enum": [
+            "adaptive",
+            "direct-read",
+            "partial-read",
+            "indexed-retrieval",
+            "project-map",
+            "hybrid"
+          ]
+        },
+        "compression": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "default_level": {
+              "type": "string",
+              "enum": ["none", "light", "balanced", "aggressive", "semantic"]
+            },
+            "target_retained_ratio": { "type": "number", "minimum": 0.1, "maximum": 1 },
+            "minimum_savings_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+            "preserve_critical": { "type": "boolean" },
+            "validate_output": { "type": "boolean" }
+          }
+        },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "m0_max_entries": { "type": "integer", "minimum": 0 },
+            "m1_ttl_seconds": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "distribution": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prefer_partial_source": { "type": "boolean" },
+            "avoid_map_for_direct_tasks": { "type": "boolean" },
+            "allow_context_expansion": { "type": "boolean" }
+          }
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cleanup_after_task": { "type": "boolean" },
+            "sync_after_task": { "type": "boolean" },
+            "incremental_sync": { "type": "boolean" },
+            "preserve_persistent_cache": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_file_size": { "type": "integer", "minimum": 1 },
+        "database": { "type": "string", "minLength": 1 },
+        "respect_gitignore": { "type": "boolean" },
+        "map": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default_token_budget": { "type": "integer", "minimum": 1 },
+            "max_symbols_per_file": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "vendor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_url", "models"],
+      "properties": {
+        "base_url": { "type": "string", "format": "uri", "minLength": 1 },
+        "chat_path": { "type": "string", "minLength": 1 },
+        "api_key": { "$ref": "#/definitions/key_source" },
+        "models": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/definitions/model" }
+        }
+      }
+    },
+    "key_source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["env"],
+          "properties": { "env": { "type": "string", "minLength": 1 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["keyring"],
+          "properties": {
+            "keyring": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["service", "user"],
+              "properties": {
+                "service": { "type": "string", "minLength": 1 },
+                "user": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file"],
+          "properties": {
+            "file": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "context_window", "price"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "encoding": { "type": "string", "enum": ["o200k_base", "cl100k_base"] },
+        "context_window": { "type": "integer", "minimum": 1 },
+        "max_output": { "type": "integer", "minimum": 1 },
+        "reasoning": { "type": "string", "enum": ["off", "low", "medium", "high"] },
+        "price": { "$ref": "#/definitions/price" }
+      }
+    },
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rates"],
+      "properties": {
+        "rates": { "$ref": "#/definitions/rates" },
+        "long_context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threshold", "rates"],
+          "properties": {
+            "threshold": { "type": "integer", "minimum": 1 },
+            "rates": { "$ref": "#/definitions/rates" }
+          }
+        }
+      }
+    },
+    "rates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output"],
+      "properties": {
+        "input": { "type": "number", "exclusiveMinimum": 0 },
+        "output": { "type": "number", "exclusiveMinimum": 0 },
+        "cache_read": { "type": "number", "minimum": 0 },
+        "cache_write": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

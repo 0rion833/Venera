@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Venera ultra-dark theme.
+
+  Black background, near-white text, one white accent. Colors are addressed by slot name;
+  a theme only overrides what it declares, so omitting a line keeps the builtin value.
+  Validate with: venera theme validate themes/venera-dark.xml
+-->
+<theme name="venera-dark">
+  <color slot="background" value="#000000"/>
+  <color slot="panel" value="#070707"/>
+  <color slot="text" value="#e4e4e4"/>
+  <color slot="dim" value="#7a7a7a"/>
+  <color slot="muted" value="#454545"/>
+  <color slot="accent" value="#ffffff"/>
+  <color slot="accent-text" value="#000000"/>
+  <color slot="border" value="#1f1f1f"/>
+  <color slot="success" value="#9bc9a4"/>
+  <color slot="warn" value="#d6b36a"/>
+  <color slot="error" value="#e07a7a"/>
+  <color slot="pulse" value="#ffffff"/>
+  <color slot="user" value="#ffffff"/>
+  <color slot="assistant" value="#cfcfcf"/>
+</theme>

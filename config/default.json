@@ -1,0 +1,104 @@
+{
+  "defaults": {
+    "vendor": "proxyapi",
+    "model": "gpt-6-luna"
+  },
+  "vendors": {
+    "proxyapi": {
+      "base_url": "https://api.proxyapi.ru/v1",
+      "chat_path": "/chat/completions",
+      "api_key": {
+        "env": "PROXYAPI_KEY"
+      },
+      "models": {
+        "gpt-6-luna": {
+          "id": "openai/gpt-6-luna",
+          "encoding": "o200k_base",
+          "context_window": 1050000,
+          "max_output": 131072,
+          "reasoning": "medium",
+          "price": {
+            "rates": {
+              "input": 30.0,
+              "output": 150.0,
+              "cache_read": 3.0,
+              "cache_write": 37.5
+            },
+            "long_context": {
+              "threshold": 272000,
+              "rates": {
+                "input": 60.0,
+                "output": 225.0,
+                "cache_read": 6.0,
+                "cache_write": 75.0
+              }
+            }
+          }
+        },
+        "gpt-6-sol": {
+          "id": "openai/gpt-6-sol",
+          "encoding": "o200k_base",
+          "context_window": 1050000,
+          "price": {
+            "rates": {
+              "input": 420.0,
+              "output": 2100.0
+            }
+          }
+        },
+        "gpt-6.1-terra": {
+          "id": "openai/gpt-6.1-terra",
+          "encoding": "o200k_base",
+          "context_window": 1050000,
+          "price": {
+            "rates": {
+              "input": 260.0,
+              "output": 1300.0
+            }
+          }
+        }
+      }
+    }
+  },
+  "limits": {
+    "session_budget_rub": 500.0,
+    "max_output_tokens_per_turn": 2000
+  },
+  "index": {
+    "max_file_size": 1048576,
+    "database": ".venera/index.db",
+    "respect_gitignore": true,
+    "map": {
+      "default_token_budget": 1000,
+      "max_symbols_per_file": 40
+    }
+  },
+  "context": {
+    "enabled": true,
+    "default_strategy": "adaptive",
+    "compression": {
+      "enabled": true,
+      "default_level": "balanced",
+      "target_retained_ratio": 0.6,
+      "minimum_savings_ratio": 0.1,
+      "preserve_critical": true,
+      "validate_output": true
+    },
+    "cache": {
+      "enabled": true,
+      "m0_max_entries": 256,
+      "m1_ttl_seconds": 86400
+    },
+    "distribution": {
+      "prefer_partial_source": true,
+      "avoid_map_for_direct_tasks": true,
+      "allow_context_expansion": true
+    },
+    "session": {
+      "cleanup_after_task": true,
+      "sync_after_task": true,
+      "incremental_sync": true,
+      "preserve_persistent_cache": true
+    }
+  }
+}

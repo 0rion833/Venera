@@ -1,0 +1,54 @@
+# Русская локаль Venera.
+app.name: VENERA
+start.title: Контекстный движок для кода
+start.hint: Enter — начать · /project — выбрать проект
+project.none: "проект: нет"
+project.title: проект
+project.prompt: вставь путь до проекта
+project.hint: Enter — открыть · Esc — отмена
+header.files: файлов
+header.symbols: симв.
+header.session: сессия
+help.help: список команд
+help.index: обновить индекс проекта
+help.map: бюджетная карта проекта
+help.vce: индекс и карта за один шаг
+help.context: подготовить контекст под запрос
+help.search: поиск файлов и символов
+help.outline: символы файла
+help.cat: проверенный диапазон файла
+help.deps: импорты и импортирующие
+help.cache: статистика кэша
+help.cache-clear: очистить кэш контекстов
+help.skills: список навыков
+help.skill: показать навык
+help.model: выбрать модель из списка
+help.models: доступные модели
+help.provider: выбрать агрегатора и его ключ
+help.api: агрегаторы и маскированные ключи
+help.vault: сбросить мастер-пароль и удалить все ключи
+api.title: API-ключ
+api.prompt: вставь ключ и нажми Enter
+api.hint: ключ хранится в keyring · Esc — отмена
+confirm.title: подтверждение
+confirm.write: ИИ хочет изменить файл
+confirm.hint: Enter — разрешить · Esc — отклонить
+vault.title: хранилище ключей
+vault.create: придумай мастер-пароль (мин. 8)
+vault.repeat: повтори пароль
+vault.unlock: введи мастер-пароль
+vault.hint_create: введи пароль (мин. 8) и Enter · Esc — выход
+vault.hint_unlock: введи пароль и Enter · Esc — сбросить
+vault.reset_title: сброс хранилища
+vault.reset_text: Все API-ключи будут удалены безвозвратно.
+vault.reset_hint: Enter — стереть · Esc — отмена
+help.project: сменить каталог проекта
+help.projects: обзор каталогов проектов
+help.theme: сменить палитру или список тем
+help.new: новая сессия
+help.sessions: сохранённые сессии
+help.session: открыть сессию
+help.cwd: каталог проекта
+help.cost: расход этой сессии
+help.clear: очистить переписку
+help.quit: выйти из TUI

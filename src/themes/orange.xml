@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Orange palette (gui.md): near-black blue-grey page, warm orange accent, and a color
+  per role вЂ” green user, cyan assistant, grey system. This is the default theme.
+
+  Validate with: venera theme validate themes/orange.xml
+-->
+<theme name="orange">
+  <color slot="background" value="#141419"/>
+  <color slot="panel" value="#101014"/>
+  <color slot="text" value="#dcdcdc"/>
+  <color slot="dim" value="#a0a0a0"/>
+  <color slot="muted" value="#5a5a66"/>
+  <color slot="accent" value="#fab283"/>
+  <color slot="accent-text" value="#141419"/>
+  <color slot="border" value="#2a2a33"/>
+  <color slot="success" value="#7fd88f"/>
+  <color slot="warn" value="#f5c07a"/>
+  <color slot="error" value="#e06c75"/>
+  <color slot="pulse" value="#fab283"/>
+  <color slot="user" value="#7fd88f"/>
+  <color slot="assistant" value="#56b6c2"/>
+  <color slot="code-bg" value="#1e1e24"/>
+  <color slot="selection" value="#33333d"/>
+</theme>
