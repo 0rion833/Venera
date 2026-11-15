@@ -155,18 +155,54 @@ pub const CACHE_VERSION: u32 = 4;
 /// The key deliberately does **not** contain the index generation (`prirote.md` §8.4):
 /// entries are validated against the hashes of the files they were built from, so an
 /// unrelated source change cannot throw away a still-valid entry.
-pub fn cache_key(strategy: &str, input: &str, max_tokens: usize, compression: &str) -> String {
+pub fn cache_key(
+    strategy: &str,
+    input: &str,
+    max_tokens: usize,
+    compression: &str,
+    fingerprint: &CacheFingerprint,
+) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(&CACHE_VERSION.to_le_bytes());
-    hasher.update(b"\x1f");
-    hasher.update(strategy.as_bytes());
-    hasher.update(b"\x1f");
-    hasher.update(input.as_bytes());
-    hasher.update(b"\x1f");
-    hasher.update(max_tokens.to_string().as_bytes());
-    hasher.update(b"\x1f");
-    hasher.update(compression.as_bytes());
+    for part in [
+        strategy,
+        input,
+        &max_tokens.to_string(),
+        compression,
+        fingerprint.encoding,
+        &fingerprint.target_ratio.to_string(),
+        &fingerprint.min_savings.to_string(),
+        &fingerprint.validate_output.to_string(),
+        &fingerprint.allow_expansion.to_string(),
+        &fingerprint.prefer_partial.to_string(),
+        &fingerprint.avoid_map_for_direct.to_string(),
+    ] {
+        hasher.update(part.as_bytes());
+        hasher.update(b"\x1f");
+    }
     hasher.finalize().to_hex().to_string()
+}
+
+/// Parameters that change the prepared context but are not part of the request itself.
+///
+/// Without them the persistent M1 cache can return a context built under different
+/// compression or distribution rules than the ones in effect.
+#[derive(Debug, Clone)]
+pub struct CacheFingerprint {
+    /// Tokenizer used to count and segment.
+    pub encoding: &'static str,
+    /// Target compression ratio for aggressive/balanced compression.
+    pub target_ratio: f64,
+    /// Minimum savings before compression is considered worthwhile.
+    pub min_savings: f64,
+    /// Whether output validation is enabled.
+    pub validate_output: bool,
+    /// Whether an oversized but valid context may fall back to the full text.
+    pub allow_expansion: bool,
+    /// Prefer partial sources over the full map.
+    pub prefer_partial: bool,
+    /// Avoid the map for direct-read tasks.
+    pub avoid_map_for_direct: bool,
 }
 
 #[cfg(test)]
@@ -189,8 +225,26 @@ mod tests {
         }
     }
 
+    fn fingerprint() -> CacheFingerprint {
+        CacheFingerprint {
+            encoding: "o200k_base",
+            target_ratio: 0.6,
+            min_savings: 0.1,
+            validate_output: true,
+            allow_expansion: true,
+            prefer_partial: true,
+            avoid_map_for_direct: true,
+        }
+    }
+
     fn key() -> String {
-        cache_key("direct-read", "read src/a.rs", 1000, "balanced")
+        cache_key(
+            "direct-read",
+            "read src/a.rs",
+            1000,
+            "balanced",
+            &fingerprint(),
+        )
     }
 
     #[test]
@@ -209,7 +263,7 @@ mod tests {
     #[test]
     fn m1_survives_a_new_manager() {
         let store = store();
-        let key = cache_key("project-map", "analyze", 500, "none");
+        let key = cache_key("project-map", "analyze", 500, "none", &fingerprint());
 
         let mut first = CacheManager::new(8, 3600, true);
         first.put(&store, &key, "text", 1, 3, &[]).expect("put");
@@ -259,12 +313,58 @@ mod tests {
 
     #[test]
     fn the_key_changes_with_strategy_budget_and_compression() {
-        let base = cache_key("direct-read", "x", 10, "none");
+        let base = cache_key("direct-read", "x", 10, "none", &fingerprint());
 
-        assert_ne!(base, cache_key("partial-read", "x", 10, "none"));
-        assert_ne!(base, cache_key("direct-read", "x", 20, "none"));
-        assert_ne!(base, cache_key("direct-read", "x", 10, "balanced"));
-        assert_eq!(base, cache_key("direct-read", "x", 10, "none"));
+        assert_ne!(
+            base,
+            cache_key("partial-read", "x", 10, "none", &fingerprint())
+        );
+        assert_ne!(
+            base,
+            cache_key("direct-read", "x", 20, "none", &fingerprint())
+        );
+        assert_ne!(
+            base,
+            cache_key("direct-read", "x", 10, "balanced", &fingerprint())
+        );
+        assert_eq!(
+            base,
+            cache_key("direct-read", "x", 10, "none", &fingerprint())
+        );
+    }
+
+    #[test]
+    fn the_key_changes_with_distributor_settings() {
+        let base = fingerprint();
+        let base_key = cache_key("direct-read", "x", 10, "none", &base);
+
+        let mut changed = base.clone();
+        changed.target_ratio = 0.3;
+        assert_ne!(
+            base_key,
+            cache_key("direct-read", "x", 10, "none", &changed)
+        );
+
+        let mut changed = base.clone();
+        changed.min_savings = 0.01;
+        assert_ne!(
+            base_key,
+            cache_key("direct-read", "x", 10, "none", &changed)
+        );
+
+        let mut changed = base.clone();
+        changed.validate_output = false;
+        assert_ne!(
+            base_key,
+            cache_key("direct-read", "x", 10, "none", &changed)
+        );
+
+        let mut changed = base.clone();
+        changed.encoding = "cl100k_base";
+        assert_ne!(
+            base_key,
+            cache_key("direct-read", "x", 10, "none", &changed)
+        );
     }
 
     #[test]

@@ -483,9 +483,16 @@ pub async fn run(args: Vec<OsString>) -> ExitCode {
         Some(Command::Theme {
             action: ThemeAction::Validate { path },
         }) => commands::theme_validate(&path),
-        Some(Command::Run { task }) => with_config(|loaded| {
-            commands::run_task(loaded, cli.vendor.as_deref(), cli.model.as_deref(), &task)
-        }),
+        Some(Command::Run { task }) => match config::Config::load() {
+            Ok(loaded) => {
+                commands::run_task(&loaded, cli.vendor.as_deref(), cli.model.as_deref(), &task)
+                    .await
+            }
+            Err(err) => {
+                eprintln!("venera: {err}");
+                ExitCode::FAILURE
+            }
+        },
         None => {
             // Out of the box: a bare launch silently writes defaults when needed and
             // opens the TUI. The interactive setup stays at `venera init`.

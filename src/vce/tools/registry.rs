@@ -1049,4 +1049,57 @@ mod tests {
         assert!(result.text.contains("imported by:"), "got: {}", result.text);
         assert!(result.text.contains("src/main.rs"));
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_and_append_refuse_a_dangling_symlink_outside_the_root() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, engine) = engine(&[("notes.txt", "keep me\n")]);
+        let outside = tempfile::tempdir().expect("outside dir");
+
+        // Dangling symlink pointing outside the project.
+        let dangling = dir
+            .path()
+            .join("notes.lnk")
+            .join("..")
+            .join("..")
+            .join(outside.path().file_name().unwrap());
+        let dangling = dir.path().join(".link-dangling");
+        std::fs::remove_file(&dangling).ok();
+        symlink(outside.path().join("created.txt"), &dangling).expect("symlink");
+
+        let write = dispatcher().call(
+            &engine,
+            "write_file",
+            &json!({ "path": ".link-dangling", "content": "x" }),
+        );
+        assert!(write.is_err(), "write must refuse a dangling symlink");
+        assert!(!outside.path().join("created.txt").exists());
+
+        let append = dispatcher().call(
+            &engine,
+            "append_file",
+            &json!({ "path": ".link-dangling", "content": "y" }),
+        );
+        assert!(append.is_err(), "append must refuse a dangling symlink");
+        assert!(!outside.path().join("created.txt").exists());
+
+        // Symlink to an existing external file is also refused.
+        std::fs::write(outside.path().join("outside.txt"), "external").expect("file");
+        let link = dir.path().join("to-outside");
+        std::fs::remove_file(&link).ok();
+        symlink(outside.path().join("outside.txt"), &link).expect("symlink");
+
+        let write = dispatcher().call(
+            &engine,
+            "write_file",
+            &json!({ "path": "to-outside", "content": "x" }),
+        );
+        assert!(write.is_err(), "write must refuse an external symlink");
+        assert_eq!(
+            std::fs::read_to_string(outside.path().join("outside.txt")).unwrap(),
+            "external"
+        );
+    }
 }

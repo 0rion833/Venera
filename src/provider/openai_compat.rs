@@ -342,7 +342,7 @@ pub async fn complete_stream(
     }
 
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
     let mut text = String::new();
     let mut calls: BTreeMap<usize, ToolCall> = BTreeMap::new();
     let mut usage: Option<WireUsage> = None;
@@ -350,28 +350,23 @@ pub async fn complete_stream(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(position) = buffer.find('\n') {
-            let line: String = buffer.drain(..=position).collect();
-            if consume_stream_line(
-                line.trim_end_matches(['\r', '\n']),
-                &mut text,
-                &mut calls,
-                &mut usage,
-                &mut on_text,
-            )? {
-                done = true;
-                break;
-            }
-        }
-        if done {
+        if consume_buffer_lines(
+            &mut buffer,
+            &chunk,
+            &mut text,
+            &mut calls,
+            &mut usage,
+            &mut on_text,
+        )? {
+            done = true;
             break;
         }
     }
 
-    if !done && !buffer.trim().is_empty() {
+    if !done && !buffer.is_empty() {
+        let line = String::from_utf8_lossy(&buffer);
         let _ = consume_stream_line(
-            buffer.trim_end_matches(['\r', '\n']),
+            line.trim_end_matches(['\r', '\n']),
             &mut text,
             &mut calls,
             &mut usage,
@@ -404,6 +399,37 @@ pub async fn complete_stream(
         usage,
         cost_rub,
     })
+}
+
+/// Feeds one network chunk into the SSE byte buffer and consumes every complete line.
+///
+/// Lines are split on `\n` in the byte buffer and each whole line is decoded afterwards,
+/// so a multi-byte UTF-8 character split across network chunks is never decoded
+/// piecewise (`from_utf8_lossy` on a chunk would corrupt it). Returns `true` when
+/// `[DONE]` was seen; the remaining half-line stays in `buffer` for the next call.
+fn consume_buffer_lines(
+    buffer: &mut Vec<u8>,
+    chunk: &[u8],
+    text: &mut String,
+    calls: &mut BTreeMap<usize, ToolCall>,
+    usage: &mut Option<WireUsage>,
+    on_text: &mut impl FnMut(String),
+) -> Result<bool, ChatError> {
+    buffer.extend_from_slice(chunk);
+    while let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
+        let raw: Vec<u8> = buffer.drain(..=position).collect();
+        let line = String::from_utf8_lossy(&raw);
+        if consume_stream_line(
+            line.trim_end_matches(['\r', '\n']),
+            text,
+            calls,
+            usage,
+            on_text,
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn consume_stream_line(
@@ -635,6 +661,54 @@ mod tests {
         assert_eq!(call.id, "call_1");
         assert_eq!(call.name, "get_file");
         assert_eq!(call.arguments, r#"{"path":"a.txt"}"#);
+    }
+
+    #[test]
+    fn a_multibyte_character_split_across_chunks_is_not_corrupted() {
+        // "ё" is two UTF-8 bytes (0xD1 0x91). Splitting the SSE line in the middle of
+        // the character and decoding each half separately (the pre-fix behaviour) turns
+        // it into U+FFFD; `consume_buffer_lines` must decode the whole line instead.
+        let mut buffer = Vec::new();
+        let mut text = String::new();
+        let mut calls = BTreeMap::new();
+        let mut usage = None;
+        let mut deltas = Vec::new();
+        let mut on_text = |delta: String| deltas.push(delta);
+
+        let mut line = b"data: {\"choices\":[{\"delta\":{\"content\":\"\xD1\x91\"}}]}".to_vec();
+        line.push(b'\n');
+        let split = line
+            .windows(2)
+            .position(|window| window == [0xD1, 0x91])
+            .expect("the ё bytes");
+        let (first, second) = line.split_at(split + 1);
+
+        assert!(
+            !consume_buffer_lines(
+                &mut buffer,
+                first,
+                &mut text,
+                &mut calls,
+                &mut usage,
+                &mut on_text,
+            )
+            .expect("first chunk")
+        );
+        assert_eq!(text, "", "the half-line must wait for its second byte");
+        assert!(
+            !consume_buffer_lines(
+                &mut buffer,
+                second,
+                &mut text,
+                &mut calls,
+                &mut usage,
+                &mut on_text,
+            )
+            .expect("second chunk")
+        );
+
+        assert_eq!(text, "ё");
+        assert_eq!(deltas, vec!["ё"]);
     }
 
     #[test]

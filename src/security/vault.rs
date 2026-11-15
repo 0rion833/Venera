@@ -22,7 +22,10 @@ use zeroize::Zeroizing;
 /// Associated data binds the ciphertext to this file format.
 const AAD: &[u8] = b"venera-vault-v1";
 
-/// Argon2id cost: 64 MiB, 3 passes, one lane.
+/// Argon2id cost: 32 MiB, 2 passes, one lane.
+///
+/// These numbers must never change: the parameters are not stored in the vault file,
+/// so any change would silently stop every existing vault from decrypting.
 const KDF_MEMORY_KIB: u32 = 32 * 1024;
 const KDF_PASSES: u32 = 2;
 const SALT_LEN: usize = 16;
@@ -213,28 +216,51 @@ impl Vault {
             })?;
         }
 
+        // Atomic replace: write a sibling temp file, sync it, then rename over the
+        // vault. A crash mid-write leaves the old vault intact instead of a truncated
+        // ciphertext, which would lock the user out of every stored key.
+        let parent = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let file_name = self
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "vault".to_owned());
+        let temp_path = parent.join(format!(".{file_name}.tmp"));
+
         let mut options = std::fs::OpenOptions::new();
-        options.create(true).truncate(true).write(true);
+        options.write(true).create(true).truncate(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt as _;
             options.mode(0o600);
         }
-        let mut file = options.open(&self.path).map_err(|source| VaultError::Io {
+        let mut temp = options.open(&temp_path).map_err(|source| VaultError::Io {
+            path: temp_path.clone(),
+            source,
+        })?;
+        temp.write_all(text.as_bytes())
+            .and_then(|()| temp.sync_all())
+            .map_err(|source| VaultError::Io {
+                path: temp_path.clone(),
+                source,
+            })?;
+        drop(temp);
+
+        std::fs::rename(&temp_path, &self.path).map_err(|source| VaultError::Io {
             path: self.path.clone(),
             source,
         })?;
-        file.write_all(text.as_bytes())
-            .and_then(|()| file.sync_all())
-            .map_err(|source| VaultError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
 
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt as _;
-            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+            std::fs::File::open(parent)
+                .and_then(|dir| dir.sync_all())
+                .ok();
         }
 
         Ok(())
@@ -371,5 +397,35 @@ mod tests {
         Vault::reset(&path).expect("reset");
         assert!(!path.exists());
         assert!(Vault::reset(&path).is_ok(), "reset is idempotent");
+    }
+
+    #[test]
+    fn a_stale_temp_file_does_not_break_the_vault() {
+        let (_dir, path) = temp_path();
+        let mut vault = Vault::create(&path, "password").expect("create");
+        vault.set("proxyapi", "sk-first").expect("set");
+
+        // Simulate a crashed save: a leftover sibling temp file from an aborted write.
+        let parent = path.parent().expect("parent");
+        let temp = parent.join(".vault.json.tmp");
+        std::fs::write(&temp, "partial garbage").expect("stale temp");
+        drop(vault);
+
+        // The vault itself must still decrypt; the stale temp is ignored on open.
+        let mut reopened = Vault::open(&path, "password").expect("open");
+        assert_eq!(
+            reopened.get("proxyapi").expect("key").expose_secret(),
+            "sk-first"
+        );
+
+        // The next save replaces the stale temp and then renames it into place.
+        reopened.set("proxyapi", "sk-second").expect("set");
+        drop(reopened);
+        let again = Vault::open(&path, "password").expect("open");
+        assert_eq!(
+            again.get("proxyapi").expect("key").expose_secret(),
+            "sk-second"
+        );
+        assert!(!temp.exists(), "the temp file must be consumed by the save");
     }
 }

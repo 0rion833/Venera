@@ -187,6 +187,7 @@ impl Session {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionStore {
     dir: PathBuf,
+    fallback: Option<PathBuf>,
 }
 
 impl SessionStore {
@@ -199,22 +200,39 @@ impl SessionStore {
         let digest = blake3::hash(canonical.to_string_lossy().as_bytes());
         let key = &digest.to_hex()[..12];
 
-        let base = std::env::current_exe()
+        let (dir, fallback) = match std::env::current_exe()
             .ok()
             .and_then(|path| path.parent().map(|dir| dir.join("sessions")))
-            .or_else(|| {
-                directories::BaseDirs::new()
-                    .map(|dirs| dirs.data_local_dir().join("venera").join("sessions"))
-            })?;
+        {
+            Some(dir) => {
+                let fallback = directories::BaseDirs::new().map(|dirs| {
+                    dirs.data_local_dir()
+                        .join("venera")
+                        .join("sessions")
+                        .join(key)
+                });
+                (dir.join(key), fallback)
+            }
+            None => {
+                let dir = directories::BaseDirs::new().map(|dirs| {
+                    dirs.data_local_dir()
+                        .join("venera")
+                        .join("sessions")
+                        .join(key)
+                })?;
+                (dir, None)
+            }
+        };
 
-        Some(Self {
-            dir: base.join(key),
-        })
+        Some(Self { dir, fallback })
     }
 
     /// Builds a store at an explicit directory; used by tests.
     pub fn at(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self {
+            dir: dir.into(),
+            fallback: None,
+        }
     }
 
     /// Directory holding the session files.
@@ -228,14 +246,27 @@ impl SessionStore {
     }
 
     /// Writes the session, creating the directory on first use.
+    ///
+    /// When the executable sits in a read-only folder (installed, not portable), the
+    /// sibling-directory write fails and the data directory is tried instead.
     pub fn save(&self, session: &Session) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)?;
         let text = serde_json::to_string_pretty(session).map_err(std::io::Error::other)?;
-        let path = self.path_for(&session.id);
-        let temporary = path.with_extension("json.tmp");
+        match self.save_to(&self.dir, &session.id, &text) {
+            Ok(()) => Ok(()),
+            Err(primary) => self
+                .fallback
+                .as_ref()
+                .map(|fallback| self.save_to(fallback, &session.id, &text))
+                .unwrap_or(Err(primary)),
+        }
+    }
 
+    fn save_to(&self, dir: &Path, id: &str, text: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        let temporary = dir.join(format!("{id}.json.tmp"));
+        let target = dir.join(format!("{id}.json"));
         std::fs::write(&temporary, text)?;
-        std::fs::rename(temporary, path)?;
+        std::fs::rename(temporary, target)?;
         Ok(())
     }
 
@@ -378,6 +409,34 @@ mod tests {
         assert_eq!(spend.prompt_tokens(), 2_000_000);
         assert!((spend.rub - 183.0).abs() < 1e-9);
         assert_eq!(spend.turns, 1);
+    }
+
+    #[test]
+    fn a_writable_data_dir_takes_over_when_the_primary_is_unusable()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let primary = tempfile::tempdir()?;
+        let fallback = tempfile::tempdir()?;
+
+        // A path under an existing *file* can never be created: create_dir_all fails,
+        // which is exactly the installed-binary case where the folder next to the exe
+        // is read-only. The data directory must then receive the session.
+        let blocker = primary.path().join("blocker");
+        std::fs::write(&blocker, "not a dir")?;
+        let store = SessionStore {
+            dir: blocker.join("sessions").join("key"),
+            fallback: Some(fallback.path().to_path_buf()),
+        };
+        let session = Session::new("D:/p", "m", "venera-dark");
+        store.save(&session)?;
+
+        let saved = fallback.path().join(format!("{}.json", session.id));
+        assert!(
+            saved.exists(),
+            "the fallback directory must receive the session"
+        );
+        let loaded = serde_json::from_str::<Session>(&std::fs::read_to_string(saved)?)?;
+        assert_eq!(loaded.id, session.id);
+        Ok(())
     }
 
     #[test]

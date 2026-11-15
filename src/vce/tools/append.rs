@@ -158,11 +158,30 @@ fn target(engine: &Engine, path: &str) -> Result<PathBuf, ToolError> {
         .check_lexical(path)
         .map_err(|error| ToolError::Engine(error.into()))?;
 
-    if candidate.exists() {
-        return engine
-            .guard()
-            .resolve(&candidate)
-            .map_err(|error| ToolError::Engine(error.into()));
+    // `exists()` is not a security check: a dangling symlink has `exists() == false`
+    // but would still be followed by `OpenOptions`. Inspect the final component itself.
+    match std::fs::symlink_metadata(&candidate) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                // Resolve and prove the target is inside the root before appending.
+                engine
+                    .guard()
+                    .resolve(&candidate)
+                    .map_err(|error| ToolError::Engine(error.into()))?;
+            }
+            // Existing file (or an inner symlink): resolve it for the final check.
+            return engine
+                .guard()
+                .resolve(&candidate)
+                .map_err(|error| ToolError::Engine(error.into()));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(ToolError::Execution(format!(
+                "cannot inspect `{}`: {error}",
+                display(engine, &candidate)
+            )));
+        }
     }
 
     let parent = candidate

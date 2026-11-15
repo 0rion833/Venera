@@ -421,13 +421,16 @@ fn walk(
     Ok(entries)
 }
 
-/// Modification time in Unix seconds; an unreadable time counts as zero.
+/// Modification time in Unix nanoseconds; an unreadable time counts as zero.
+///
+/// Nanosecond precision matters: two edits of the same size within one second must
+/// invalidate the index entry, and second-granularity timestamps silently miss them.
 fn modified_at(metadata: &std::fs::Metadata) -> i64 {
     metadata
         .modified()
         .ok()
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs() as i64)
+        .map(|duration| duration.as_nanos() as i64)
         .unwrap_or_default()
 }
 
@@ -605,6 +608,24 @@ mod tests {
         let report = run(&dir, &store, RefreshOptions::default());
 
         assert_eq!(report.files, 1);
+    }
+
+    #[test]
+    fn two_edits_within_one_second_invalidate_the_cache() {
+        // Same size, different content, both writes inside a single second: a
+        // second-granularity mtime would report "unchanged" and keep stale symbols.
+        let (dir, store) = project(&[("src/lib.rs", "fn a() {}\n")]);
+        run(&dir, &store, RefreshOptions::default());
+
+        std::fs::write(dir.path().join("src/lib.rs"), "fn b() {}\n").expect("rewrite");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let report = run(&dir, &store, RefreshOptions::default());
+
+        assert_eq!(report.reparsed, 1, "same-second edit must reparse");
+        assert_eq!(report.modified, 1);
+        let symbols = store.symbols().expect("symbols");
+        assert!(symbols.iter().any(|symbol| symbol.name == "b"));
+        assert!(!symbols.iter().any(|symbol| symbol.name == "a"));
     }
 
     #[test]

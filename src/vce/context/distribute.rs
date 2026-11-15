@@ -72,6 +72,8 @@ pub struct ContextOutput {
     pub sources: Vec<String>,
     /// Tokens the preservation check could not find; empty when it passed.
     pub validation_missing: Vec<String>,
+    /// True when the final context exceeds the requested token budget after fallbacks.
+    pub budget_exceeded: bool,
 }
 
 /// A distributor failure.
@@ -466,6 +468,15 @@ impl ContextProvider for Distributor {
             &request.input,
             request.max_tokens,
             request.compression.as_str(),
+            &crate::vce::cache::CacheFingerprint {
+                encoding: self.encoding.as_str(),
+                target_ratio: self.target_ratio,
+                min_savings: self.min_savings,
+                validate_output: self.validate_output,
+                allow_expansion: self.allow_expansion,
+                prefer_partial: self.prefer_partial,
+                avoid_map_for_direct: self.avoid_map_for_direct,
+            },
         );
 
         if let Some((stored, _from_ram)) = self.cache.get(engine.store(), &key, generation)?
@@ -521,6 +532,7 @@ impl ContextProvider for Distributor {
                     segments: segments.len(),
                     sources,
                     validation_missing: Vec::new(),
+                    budget_exceeded: false,
                 };
 
                 return self.finish(engine, &key, output);
@@ -606,10 +618,16 @@ impl ContextProvider for Distributor {
             compressed = compress::compress(&segments, CompressionLevel::None, self.encoding, None);
         }
 
+        // The budget is a hard ceiling; fallbacks above must not silently slip out of it.
+        // If a fallback dropped validation, keep the content but report the overflow so the
+        // caller can decide (retry with more tokens) instead of trusting an oversized result.
+        let final_tokens = compressed.stats.compressed_tokens;
+        let exceeds_budget = final_tokens > allowance && !segments.is_empty();
+
         let output = ContextOutput {
             content: compressed.text.clone(),
             original_tokens,
-            final_tokens: compressed.stats.compressed_tokens,
+            final_tokens,
             cache_hits: 0,
             cache_misses: 1,
             strategy: chosen.estimate.strategy,
@@ -617,6 +635,7 @@ impl ContextProvider for Distributor {
             segments: compressed.kept.len(),
             sources,
             validation_missing: missing,
+            budget_exceeded: exceeds_budget,
         };
 
         self.finish(engine, &key, output)

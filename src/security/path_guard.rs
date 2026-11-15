@@ -86,31 +86,26 @@ impl PathGuard {
     /// Checks a path that may not exist yet, without touching the filesystem.
     ///
     /// `..` components are rejected outright: a lexical escape is a bug even when the
-    /// target happens to exist.
+    /// target happens to exist. The result is only guaranteed to be safe lexically;
+    /// existing paths must still go through [`resolve`](Self::resolve) before I/O.
     pub fn check_lexical(&self, path: impl AsRef<Path>) -> Result<PathBuf, GuardError> {
         let path = path.as_ref();
+
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(GuardError::Escape {
+                path: path.to_path_buf(),
+                root: self.root.clone(),
+            });
+        }
+
         let joined = if path.is_absolute() {
             path.to_path_buf()
         } else {
             self.root.join(path)
         };
-
-        let mut depth = 0usize;
-        for component in joined.components() {
-            match component {
-                std::path::Component::ParentDir => {
-                    if depth == 0 {
-                        return Err(GuardError::Escape {
-                            path: joined.clone(),
-                            root: self.root.clone(),
-                        });
-                    }
-                    depth -= 1;
-                }
-                std::path::Component::Normal(_) => depth += 1,
-                _ => {}
-            }
-        }
 
         if joined.starts_with(&self.root) {
             Ok(joined)
@@ -158,8 +153,35 @@ mod tests {
     #[test]
     fn rejects_escapes_through_parent_components() {
         let (_dir, guard) = guard();
-        let err = guard.check_lexical("../../etc/passwd").expect_err("escape");
+        for path in [
+            "../../etc/passwd",
+            "src/../../outside.txt",
+            "src/../inside.txt",
+            "../outside.txt",
+        ] {
+            let err = guard.check_lexical(path).expect_err("escape");
+            assert!(matches!(err, GuardError::Escape { .. }), "path: {path}");
+        }
+    }
+
+    #[test]
+    fn rejects_parent_components_below_the_root() {
+        let (_dir, guard) = guard();
+        let err = guard
+            .check_lexical("src/../main.rs")
+            .expect_err("parent component");
         assert!(matches!(err, GuardError::Escape { .. }));
+    }
+
+    #[test]
+    fn lexical_check_allows_plain_relative_paths() {
+        let (_dir, guard) = guard();
+        let checked = guard.check_lexical("src/main.rs").expect("plain path");
+        assert_eq!(checked, guard.root().join("src/main.rs"));
+        assert_eq!(
+            guard.check_lexical("new/file.rs").unwrap(),
+            guard.root().join("new/file.rs")
+        );
     }
 
     #[test]

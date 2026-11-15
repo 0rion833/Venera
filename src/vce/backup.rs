@@ -66,7 +66,7 @@ pub struct BackupReport {
 }
 
 /// What `/back` restored.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RestoreReport {
     /// Backup files in `index2`.
     pub files: usize,
@@ -76,6 +76,8 @@ pub struct RestoreReport {
     pub removed: usize,
     /// Files already identical to the backup.
     pub unchanged: usize,
+    /// Index/refresh steps that failed after a file was restored on disk.
+    pub index_failures: Vec<String>,
 }
 
 /// The static backup database.
@@ -234,8 +236,16 @@ pub fn restore(engine: &Engine) -> Result<RestoreReport, BackupError> {
             path: row.path.clone(),
             source,
         })?;
-        let _ = refresh::reindex_file(engine.store(), engine.root(), &row.path);
-        let _ = engine.store().set_origin(&row.path, "user");
+        if let Err(error) = refresh::reindex_file(engine.store(), engine.root(), &row.path) {
+            report
+                .index_failures
+                .push(format!("reindex {}: {error}", row.path));
+        }
+        if let Err(error) = engine.store().set_origin(&row.path, "user") {
+            report
+                .index_failures
+                .push(format!("origin {}: {error}", row.path));
+        }
         report.restored += 1;
     }
 
@@ -255,11 +265,17 @@ pub fn restore(engine: &Engine) -> Result<RestoreReport, BackupError> {
             path: file.path.clone(),
             source,
         })?;
-        let _ = engine.store().delete_file(&file.path);
+        if let Err(error) = engine.store().delete_file(&file.path) {
+            report
+                .index_failures
+                .push(format!("delete {}: {error}", file.path));
+        }
         report.removed += 1;
     }
 
-    let _ = engine.refresh(&RefreshOptions::default());
+    if let Err(error) = engine.refresh(&RefreshOptions::default()) {
+        report.index_failures.push(format!("refresh: {error}"));
+    }
     Ok(report)
 }
 
@@ -347,6 +363,43 @@ mod tests {
             "user one"
         );
         assert!(!dir.path().join("ai-new.txt").exists());
+    }
+
+    #[test]
+    fn restore_keeps_a_clean_index_report_and_yells_when_the_index_is_locked() {
+        let (dir, engine) = project();
+        snapshot(&engine).expect("snapshot");
+
+        std::fs::write(dir.path().join("ai-new.txt"), "ai new").expect("write");
+        engine.refresh(&RefreshOptions::default()).expect("refresh");
+        engine
+            .store()
+            .set_origin("ai-new.txt", "ai")
+            .expect("origin");
+
+        let report = restore(&engine).expect("restore");
+        assert_eq!(
+            report.removed, 2,
+            "ai.txt and ai-new.txt have no user snapshot"
+        );
+        assert_eq!(report.restored, 0);
+        assert_eq!(report.unchanged, 1, "user.txt is already in the backup");
+        assert!(
+            report.index_failures.is_empty(),
+            "clean restore must not invent failures, got {report:?}"
+        );
+
+        // With the database held by a second writer any index write fails with
+        // SQLITE_BUSY. The pre-fix code dropped some of those errors with `let _ =` and
+        // reported success; restore must return an explicit error instead.
+        let blocker = crate::vce::index::m1::Store::open(dir.path().join(".venera/index.db"))
+            .expect("blocker");
+        blocker.begin().expect("lock");
+        let error = restore(&engine).expect_err("locked restore must fail loudly");
+        assert!(
+            error.to_string().contains("database is locked"),
+            "expected a busy error, got {error}"
+        );
     }
 
     #[test]

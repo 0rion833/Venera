@@ -2,8 +2,8 @@
 //!
 //! `--test`, `models`, `config check`, and the index commands (`index`, `map`,
 //! `measure`) are real: they run offline, need no API key, and print the token math
-//! behind every price. `models --refresh` is the only command that touches the network.
-//! `theme validate` and `run` are still stubs.
+//! behind every price. `models --refresh` and `run` are the only commands that touch
+//! the network. `theme validate` is still a stub.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -1156,15 +1156,94 @@ pub fn theme_validate(path: &str) -> ExitCode {
     }
 }
 
-/// `venera run "task"` — headless mode.
-pub fn run_task(
-    _loaded: &LoadedConfig,
-    _vendor: Option<&str>,
-    _model: Option<&str>,
+/// `venera run "task"` — headless mode: one streaming answer, no interactive shell.
+pub async fn run_task(
+    loaded: &LoadedConfig,
+    vendor: Option<&str>,
+    model: Option<&str>,
     task: &str,
 ) -> ExitCode {
     tracing::debug!(task, "headless run requested");
-    not_implemented("run")
+
+    let selection =
+        match selection::select(&loaded.config, cached_catalog().as_ref(), vendor, model) {
+            Ok(selection) => selection,
+            Err(err) => {
+                eprintln!("venera: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+    print_selection(&selection, selection.reasoning);
+    println!();
+
+    let Some(provider) = registry::get(&selection.vendor_name) else {
+        eprintln!("venera: unknown vendor `{}`", selection.vendor_name);
+        return ExitCode::FAILURE;
+    };
+    let resolved = match keys::resolve(provider.id) {
+        Ok(Some(resolved)) => resolved,
+        Ok(None) => {
+            eprintln!(
+                "venera: no API key for `{}` (env {} or the vault); `run` is online-only",
+                provider.id, provider.key_env
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(err) => {
+            eprintln!("venera: cannot read the API key: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut messages: Vec<crate::provider::openai_compat::ChatMessage> = Vec::new();
+    if let Some(system) = crate::core::prompt::PromptParts::new(task, true).system_message() {
+        messages.push(crate::provider::openai_compat::ChatMessage::system(system));
+    }
+    messages.push(crate::provider::openai_compat::ChatMessage::user(
+        task.to_owned(),
+    ));
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("venera: cannot build the HTTP client: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match crate::provider::openai_compat::complete_stream(
+        &client,
+        provider,
+        &resolved.secret,
+        &selection.model_id,
+        &messages,
+        selection.reasoning,
+        None,
+        |delta| print!("{delta}"),
+    )
+    .await
+    {
+        Ok(completion) => {
+            println!();
+            println!();
+            let usage = &completion.usage;
+            println!(
+                "· {turns} turn · {input} in · {output} out · {cost}",
+                turns = 1,
+                input = usage.input,
+                output = usage.output,
+                cost = format_rub(turn_cost(&selection.price, usage).total_rub()),
+            );
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("venera: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn print_selection(selection: &Selection, reasoning: Reasoning) {
@@ -1282,9 +1361,4 @@ fn format_age(fetched_at_unix: u64) -> String {
         3601..=86_400 => format!("{} h ago", seconds / 3600),
         _ => format!("{} days ago", seconds / 86_400),
     }
-}
-
-fn not_implemented(command: &str) -> ExitCode {
-    eprintln!("venera: `{command}` is not implemented yet");
-    ExitCode::FAILURE
 }
