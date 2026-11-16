@@ -63,10 +63,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: archives
-      - name: Create GitHub release with archives
+      - name: Create or replace GitHub release with archives
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Re-creating a tag (e.g. re-running a version) must not fail on the old
+          # release body: drop the previous release first, keep the tag intact.
+          gh release delete "$GITHUB_REF_NAME" --yes || true
           gh release create "$GITHUB_REF_NAME" archives/*/*.zip \
             --title "Venera $GITHUB_REF_NAME" \
             --notes "Venera $GITHUB_REF_NAME. Native archives: Linux, macOS, Windows."
