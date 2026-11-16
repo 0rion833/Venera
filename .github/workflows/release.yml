@@ -9,14 +9,64 @@ permissions:
   contents: write
 
 jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: Linux
+          - os: macos-latest
+            artifact: MACos
+          - os: windows-latest
+            artifact: Windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release
+      - name: Package archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tag="${{ github.ref_name }}"
+          ver="${tag#v}"
+          underscored="$(printf '%s' "$ver" | tr '.' '-')"
+          mkdir -p "dist/venera-${underscored}"
+          cp target/release/venera "dist/venera-${underscored}/venera"
+          zip -rq "venera-${underscored}_${{ matrix.artifact }}.zip" "dist/venera-${underscored}"
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.Substring(1).Replace('.', '-')
+          New-Item -ItemType Directory -Path "dist\venera-$ver" -Force | Out-Null
+          Copy-Item target/release/venera.exe "dist\venera-$ver\venera.exe"
+          Compress-Archive -Path "dist\venera-$ver" -DestinationPath "venera-${ver}_${{ matrix.artifact }}.zip" -Force
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: venera-${{ matrix.artifact }}
+          path: venera-*.zip
+          if-no-files-found: error
+
   release:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          path: archives
       - name: Create GitHub release with archives
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" releases/*.zip \
+          gh release create "$GITHUB_REF_NAME" archives/*/*.zip \
             --title "Venera $GITHUB_REF_NAME" \
-            --notes "Venera $GITHUB_REF_NAME. Archives: Linux, macOS, Windows."
+            --notes "Venera $GITHUB_REF_NAME. Native archives: Linux, macOS, Windows."
