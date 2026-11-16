@@ -176,6 +176,8 @@ pub fn cache_key(
         &fingerprint.allow_expansion.to_string(),
         &fingerprint.prefer_partial.to_string(),
         &fingerprint.avoid_map_for_direct.to_string(),
+        &fingerprint.budget_window.to_string(),
+        &fingerprint.budget_reserve_output.to_string(),
     ] {
         hasher.update(part.as_bytes());
         hasher.update(b"\x1f");
@@ -203,6 +205,10 @@ pub struct CacheFingerprint {
     pub prefer_partial: bool,
     /// Avoid the map for direct-read tasks.
     pub avoid_map_for_direct: bool,
+    /// Model context window the effective allowance was computed from.
+    pub budget_window: u64,
+    /// Output reserve subtracted from the window before the allowance was computed.
+    pub budget_reserve_output: u64,
 }
 
 #[cfg(test)]
@@ -234,6 +240,8 @@ mod tests {
             allow_expansion: true,
             prefer_partial: true,
             avoid_map_for_direct: true,
+            budget_window: 1_050_000,
+            budget_reserve_output: 131_072,
         }
     }
 
@@ -364,6 +372,28 @@ mod tests {
         assert_ne!(
             base_key,
             cache_key("direct-read", "x", 10, "none", &changed)
+        );
+    }
+
+    #[test]
+    fn the_key_changes_with_the_effective_budget() {
+        // The allowance is derived from the window and the output reserve; a context
+        // prepared under one budget must never be served for a different one.
+        let base = fingerprint();
+        let base_key = cache_key("indexed-retrieval", "x", 10, "none", &base);
+
+        let mut smaller_window = base.clone();
+        smaller_window.budget_window = 200_000;
+        assert_ne!(
+            base_key,
+            cache_key("indexed-retrieval", "x", 10, "none", &smaller_window)
+        );
+
+        let mut larger_reserve = base.clone();
+        larger_reserve.budget_reserve_output = 64_000;
+        assert_ne!(
+            base_key,
+            cache_key("indexed-retrieval", "x", 10, "none", &larger_reserve)
         );
     }
 

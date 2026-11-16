@@ -271,8 +271,15 @@ impl SessionStore {
     }
 
     /// Reads one session; `None` when the file is missing or unreadable.
+    ///
+    /// The fallback directory is checked too: a session saved next to a read-only
+    /// executable must be found on the next launch.
     pub fn load(&self, id: &str) -> Option<Session> {
-        let text = std::fs::read_to_string(self.path_for(id)).ok()?;
+        let text = read_text(&self.path_for(id)).or_else(|| {
+            self.fallback
+                .as_ref()
+                .and_then(|dir| read_text(&dir.join(format!("{id}.json"))))
+        })?;
         let mut session: Session = serde_json::from_str(&text).ok()?;
 
         // Old transcripts printed `₽`, which some consoles render as a box.
@@ -283,19 +290,16 @@ impl SessionStore {
         Some(session)
     }
 
-    /// Every readable session, newest first.
+    /// Every readable session from the primary and fallback directories, newest first.
     pub fn list(&self) -> Vec<Session> {
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return Vec::new();
-        };
-
-        let mut sessions: Vec<Session> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-            .filter_map(|path| std::fs::read_to_string(path).ok())
-            .filter_map(|text| serde_json::from_str(&text).ok())
-            .collect();
+        let mut sessions = list_dir(&self.dir);
+        if let Some(fallback) = &self.fallback {
+            for session in list_dir(fallback) {
+                if !sessions.iter().any(|known| known.id == session.id) {
+                    sessions.push(session);
+                }
+            }
+        }
 
         sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
         sessions
@@ -310,6 +314,25 @@ impl SessionStore {
     pub fn remove(&self, id: &str) -> std::io::Result<()> {
         std::fs::remove_file(self.path_for(id))
     }
+}
+
+fn read_text(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok()
+}
+
+/// Reads every session file in `dir`; an unreadable directory is simply empty.
+fn list_dir(dir: &Path) -> Vec<Session> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .filter_map(|text| serde_json::from_str(&text).ok())
+        .collect()
 }
 
 fn unix_now() -> u64 {
@@ -436,6 +459,14 @@ mod tests {
         );
         let loaded = serde_json::from_str::<Session>(&std::fs::read_to_string(saved)?)?;
         assert_eq!(loaded.id, session.id);
+
+        // Reading is symmetric with writing: the fallback copy is found.
+        assert_eq!(
+            store.load(&session.id).map(|item| item.id),
+            Some(session.id.clone())
+        );
+        assert_eq!(store.list().len(), 1);
+        assert_eq!(store.latest().map(|item| item.id), Some(session.id.clone()));
         Ok(())
     }
 

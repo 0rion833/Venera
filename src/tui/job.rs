@@ -100,6 +100,13 @@ pub enum JobDone {
     Restore(Box<RestoreReport>),
     /// A provider catalog was downloaded.
     Catalog(Box<Catalog>),
+    /// Every provider catalog was downloaded by `/install`.
+    Install {
+        /// Providers whose catalog was refreshed.
+        providers: usize,
+        /// Models across those catalogs.
+        models: usize,
+    },
     /// A chat completion arrived.
     Chat(Box<ChatResult>),
     /// The job failed; the message is ready for the transcript.
@@ -385,6 +392,72 @@ fn run_catalog(provider: &str) -> Result<Catalog, String> {
             Ok::<Catalog, crate::provider::catalog::CatalogError>(catalog)
         })
         .map_err(|error| error.to_string())
+}
+
+/// Downloads the catalog of every supported aggregator on a worker thread.
+pub fn install() -> Job {
+    let progress = Progress::new("качаю каталоги");
+    progress.set_total(registry::PROVIDERS.len());
+    let worker = Arc::clone(&progress);
+    let (sender, receiver) = mpsc::channel();
+
+    let handle = std::thread::spawn(move || {
+        let done = match run_install(&worker) {
+            Ok((providers, models)) => JobDone::Install { providers, models },
+            Err(error) => JobDone::Failed(error),
+        };
+        let _ = sender.send(done);
+    });
+
+    Job {
+        title: "install",
+        progress,
+        receiver,
+        stream: None,
+        handle: Some(handle),
+    }
+}
+
+fn run_install(progress: &Progress) -> Result<(usize, usize), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    runtime.block_on(async {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|error| error.to_string())?;
+
+        let mut providers = 0usize;
+        let mut models = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+
+        for (index, provider) in registry::PROVIDERS.iter().enumerate() {
+            progress.set_note(&format!("качаю каталог {}", provider.id));
+            match Catalog::fetch_for(provider.id, &client).await {
+                Ok(catalog) => {
+                    models += catalog.models.len();
+                    catalog.save_cached().map_err(|error| error.to_string())?;
+                    providers += 1;
+                }
+                // One aggregator being down must not block the rest.
+                Err(error) => failures.push(format!("{}: {error}", provider.id)),
+            }
+            progress.advance(index + 1);
+        }
+
+        if providers == 0 {
+            return Err(format!(
+                "не удалось скачать ни одного каталога: {}",
+                failures.join("; ")
+            ));
+        }
+
+        progress.set_note("готово");
+        Ok((providers, models))
+    })
 }
 
 fn run_index(

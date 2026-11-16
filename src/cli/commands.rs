@@ -326,7 +326,9 @@ pub fn token_test(
     );
     println!(
         "cache write   {} tok × {} = {}",
-        format_tokens(usage.cache_write),
+        usage
+            .cache_write
+            .map_or_else(|| "—".to_owned(), format_tokens),
         format_rate(rates.cache_write_or_input()),
         format_rub(cost.cache_write_rub)
     );

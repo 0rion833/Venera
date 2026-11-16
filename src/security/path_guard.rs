@@ -128,6 +128,88 @@ impl PathGuard {
             .join("/");
         Some(text)
     }
+
+    /// Resolves a path that may not exist yet, proving every existing component first.
+    ///
+    /// [`check_lexical`](Self::check_lexical) is only lexical: a symlink on disk would let
+    /// a write leave the root. This follows symlinks in the existing prefix — including a
+    /// symlink in the final component — and rejects anything that resolves outside the
+    /// root. A missing tail is appended to the resolved existing ancestor.
+    pub fn resolve_for_write(&self, path: impl AsRef<Path>) -> Result<PathBuf, GuardError> {
+        let path = path.as_ref();
+
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(GuardError::Escape {
+                path: path.to_path_buf(),
+                root: self.root.clone(),
+            });
+        }
+
+        let joined = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+        if !joined.starts_with(&self.root) {
+            return Err(GuardError::Escape {
+                path: joined,
+                root: self.root.clone(),
+            });
+        }
+
+        let mut current = joined.clone();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        loop {
+            match std::fs::symlink_metadata(&current) {
+                Ok(metadata) => {
+                    let resolved = current.canonicalize().map_err(|source| GuardError::Io {
+                        path: current.clone(),
+                        source,
+                    })?;
+                    if !resolved.starts_with(&self.root) {
+                        return Err(GuardError::Escape {
+                            path: resolved,
+                            root: self.root.clone(),
+                        });
+                    }
+                    if metadata.file_type().is_symlink() {
+                        // The link itself is followed: write to its target, which is
+                        // inside the root by the check above.
+                        return Ok(resolved);
+                    }
+                    let mut out = resolved;
+                    for component in tail.iter().rev() {
+                        out.push(component);
+                    }
+                    return Ok(out);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let Some(name) = current.file_name().map(|name| name.to_os_string()) else {
+                        return Err(GuardError::Io {
+                            path: joined.clone(),
+                            source: error,
+                        });
+                    };
+                    tail.push(name);
+                    if !current.pop() {
+                        return Err(GuardError::Io {
+                            path: joined.clone(),
+                            source: error,
+                        });
+                    }
+                }
+                Err(source) => {
+                    return Err(GuardError::Io {
+                        path: current,
+                        source,
+                    });
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -200,5 +282,62 @@ mod tests {
 
         let err = guard.resolve("link").expect_err("symlink escape");
         assert!(matches!(err, GuardError::Escape { .. }));
+    }
+
+    #[test]
+    fn resolve_for_write_allows_a_missing_file_under_the_root() {
+        let (_dir, guard) = guard();
+        let resolved = guard
+            .resolve_for_write("src/new_file.rs")
+            .expect("a new file inside the root");
+
+        assert!(resolved.starts_with(guard.root()));
+        assert!(resolved.ends_with("new_file.rs"));
+    }
+
+    #[test]
+    fn resolve_for_write_rejects_parent_components() {
+        let (_dir, guard) = guard();
+        let err = guard
+            .resolve_for_write("../escape.txt")
+            .expect_err("lexical escape");
+        assert!(matches!(err, GuardError::Escape { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_for_write_refuses_a_symlink_that_leaves_the_root() {
+        let (dir, guard) = guard();
+        let outside = tempfile::tempdir().expect("outside");
+        std::os::unix::fs::symlink(
+            outside.path().join("target.txt"),
+            dir.path().join("escape.txt"),
+        )
+        .expect("symlink");
+
+        // The final component is a dangling symlink to the outside: writing through it
+        // would create a file beyond the root.
+        let err = guard
+            .resolve_for_write("escape.txt")
+            .expect_err("symlink escape on write");
+        assert!(matches!(err, GuardError::Escape { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_for_write_follows_a_symlink_that_stays_inside() {
+        let (dir, guard) = guard();
+        std::fs::write(dir.path().join("src/real.rs"), "fn real() {}\n").expect("write");
+        std::os::unix::fs::symlink(dir.path().join("src/real.rs"), dir.path().join("alias.rs"))
+            .expect("symlink");
+
+        let resolved = guard.resolve_for_write("alias.rs").expect("inside");
+        assert_eq!(
+            resolved,
+            dir.path()
+                .join("src/real.rs")
+                .canonicalize()
+                .expect("canon")
+        );
     }
 }

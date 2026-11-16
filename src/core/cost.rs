@@ -42,7 +42,7 @@ pub fn turn_cost(price: &ModelPrice, usage: &Usage) -> CostBreakdown {
         input_rub: per_million(usage.input, rates.input),
         output_rub: per_million(usage.output, rates.output),
         cache_read_rub: per_million(usage.cache_read, rates.cache_read_or_input()),
-        cache_write_rub: per_million(usage.cache_write, rates.cache_write_or_input()),
+        cache_write_rub: per_million(usage.cache_write.unwrap_or(0), rates.cache_write_or_input()),
         prompt_tokens,
         long_context,
     }
@@ -227,7 +227,7 @@ mod tests {
     fn bills_cache_buckets_at_their_own_rates() {
         let usage = Usage {
             cache_read: 100_000,
-            cache_write: 100_000,
+            cache_write: Some(100_000),
             ..Usage::default()
         };
         let cost = turn_cost(&luna(), &usage);
@@ -251,7 +251,7 @@ mod tests {
         };
         let usage = Usage {
             cache_read: 1_000_000,
-            cache_write: 1_000_000,
+            cache_write: Some(1_000_000),
             ..Usage::default()
         };
 

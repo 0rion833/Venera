@@ -219,7 +219,9 @@ pub fn restore(engine: &Engine) -> Result<RestoreReport, BackupError> {
 
     for row in rows {
         backed_up.insert(row.path.clone());
-        let target = engine.guard().check_lexical(&row.path)?;
+        // A restore writes to disk: the final path must be proven to stay inside the
+        // root through any symlink, not merely lexically.
+        let target = engine.guard().resolve_for_write(&row.path)?;
         let current = std::fs::read(&target).ok();
         if current.as_deref() == Some(row.content.as_slice()) {
             report.unchanged += 1;
@@ -286,7 +288,18 @@ pub fn sync(engine: &Engine, paths: &[String]) -> Result<usize, BackupError> {
     let mut changed = 0usize;
 
     for path in paths {
-        let target = engine.guard().check_lexical(path)?;
+        // Reading through a symlink that leaves the project is a leak, so resolve the
+        // real path first. A path that no longer exists means "removed from the backup".
+        let target = match engine.guard().resolve(path) {
+            Ok(target) => target,
+            Err(GuardError::Io { .. }) => {
+                backup.remove(path)?;
+                let _ = engine.store().delete_file(path);
+                changed += 1;
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
         if !target.is_file() {
             backup.remove(path)?;
             let _ = engine.store().delete_file(path);
@@ -308,7 +321,9 @@ pub fn sync(engine: &Engine, paths: &[String]) -> Result<usize, BackupError> {
         }
 
         engine.store().set_origin(path, "user")?;
-        let _ = refresh::reindex_file(engine.store(), engine.root(), path);
+        // A failed reindex must not look like a successful sync: the caller has to know
+        // that the backup and the index now disagree.
+        refresh::reindex_file(engine.store(), engine.root(), path)?;
         engine.store().set_origin(path, "user")?;
         backup.upsert(path, &hash, &bytes)?;
         changed += 1;
@@ -400,6 +415,64 @@ mod tests {
             error.to_string().contains("database is locked"),
             "expected a busy error, got {error}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_refuses_a_symlink_that_leaves_the_root() {
+        let (dir, engine) = project();
+        let outside = tempfile::tempdir().expect("outside");
+        let target = outside.path().join("target.txt");
+        std::fs::write(&target, "external").expect("outside file");
+
+        BackupStore::open(dir.path())
+            .expect("backup")
+            .upsert("escape.txt", "hash", b"from backup")
+            .expect("upsert");
+        std::os::unix::fs::symlink(&target, dir.path().join("escape.txt")).expect("symlink");
+
+        let error = restore(&engine).expect_err("a symlink escape must be refused");
+
+        assert!(
+            matches!(error, BackupError::Guard(_)),
+            "expected a guard error, got {error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read"),
+            "external",
+            "the file outside the project must not be touched"
+        );
+    }
+
+    #[test]
+    fn a_failed_index_write_is_not_a_successful_sync() {
+        let (dir, engine) = project();
+        snapshot(&engine).expect("snapshot");
+
+        std::fs::write(dir.path().join("user.txt"), "user edited").expect("edit");
+
+        // A second writer makes index writes fail with SQLITE_BUSY. Sync must report the
+        // failure instead of returning a changed count as if the index had kept up.
+        let blocker = crate::vce::index::m1::Store::open(dir.path().join(".venera/index.db"))
+            .expect("blocker");
+        blocker.begin().expect("lock");
+
+        let error = sync(&engine, &["user.txt".to_owned()]).expect_err("sync must fail loudly");
+        assert!(
+            error.to_string().contains("database is locked"),
+            "expected a busy error, got {error}"
+        );
+
+        // The backup must still hold the pre-edit content.
+        let rows = BackupStore::open(dir.path())
+            .expect("backup")
+            .rows()
+            .expect("rows");
+        let row = rows
+            .iter()
+            .find(|row| row.path == "user.txt")
+            .expect("user.txt row");
+        assert_eq!(row.content.as_slice(), b"user one");
     }
 
     #[test]

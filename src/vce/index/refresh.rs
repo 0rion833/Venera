@@ -354,6 +354,11 @@ pub fn reindex_file(
             return Err(err);
         }
     }
+
+    // A single-file reindex changes project state just like a full refresh does. Without
+    // this bump the runtime cache (M0) keeps its old `key:generation` entry and serves
+    // stale context after `Engine::source` refreshed a changed file.
+    store.bump_generation()?;
     Ok(true)
 }
 

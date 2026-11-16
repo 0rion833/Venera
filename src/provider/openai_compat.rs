@@ -567,6 +567,12 @@ struct WireUsage {
     prompt_tokens_details: Option<PromptDetails>,
     #[serde(default)]
     completion_tokens_details: Option<CompletionDetails>,
+    /// Anthropic-style cache write counter that some aggregators pass through.
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
+    /// DeepSeek-style cache hit counter.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u64>,
     #[serde(default)]
     cost_rub: Option<f64>,
 }
@@ -575,6 +581,9 @@ struct WireUsage {
 struct PromptDetails {
     #[serde(default)]
     cached_tokens: u64,
+    /// Cache-write counter where a provider exposes it in the details block.
+    #[serde(default)]
+    cache_write_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -585,19 +594,25 @@ struct CompletionDetails {
 
 impl From<WireUsage> for Usage {
     fn from(usage: WireUsage) -> Self {
-        let cached = usage
-            .prompt_tokens_details
-            .map_or(0, |details| details.cached_tokens);
+        let details = usage.prompt_tokens_details;
+        let cached = details
+            .as_ref()
+            .map_or(0, |details| details.cached_tokens)
+            .max(usage.prompt_cache_hit_tokens.unwrap_or(0));
         let reasoning = usage
             .completion_tokens_details
             .map_or(0, |details| details.reasoning_tokens);
+        // `None` means "the provider did not report it", which is not the same as zero.
+        let cache_write = details
+            .and_then(|details| details.cache_write_tokens)
+            .or(usage.cache_creation_input_tokens);
 
         Self {
             input: usage.prompt_tokens.saturating_sub(cached),
             output: usage.completion_tokens,
             reasoning,
             cache_read: cached,
-            cache_write: 0,
+            cache_write,
         }
     }
 }
@@ -812,10 +827,15 @@ mod tests {
         let usage = Usage::from(WireUsage {
             prompt_tokens: 1_000,
             completion_tokens: 200,
-            prompt_tokens_details: Some(PromptDetails { cached_tokens: 400 }),
+            prompt_tokens_details: Some(PromptDetails {
+                cached_tokens: 400,
+                cache_write_tokens: None,
+            }),
             completion_tokens_details: Some(CompletionDetails {
                 reasoning_tokens: 50,
             }),
+            cache_creation_input_tokens: None,
+            prompt_cache_hit_tokens: None,
             cost_rub: Some(1.5),
         });
 
@@ -823,5 +843,53 @@ mod tests {
         assert_eq!(usage.cache_read, 400);
         assert_eq!(usage.output, 200);
         assert_eq!(usage.reasoning, 50);
+        assert_eq!(
+            usage.cache_write, None,
+            "a provider that does not report cache writes must not look like zero writes"
+        );
+    }
+
+    #[test]
+    fn usage_reads_the_cache_write_counter_when_the_provider_reports_it() {
+        let anthropic = Usage::from(WireUsage {
+            prompt_tokens: 1_000,
+            completion_tokens: 10,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cache_creation_input_tokens: Some(250),
+            prompt_cache_hit_tokens: None,
+            cost_rub: None,
+        });
+        assert_eq!(anthropic.cache_write, Some(250));
+
+        let details = Usage::from(WireUsage {
+            prompt_tokens: 1_000,
+            completion_tokens: 10,
+            prompt_tokens_details: Some(PromptDetails {
+                cached_tokens: 100,
+                cache_write_tokens: Some(75),
+            }),
+            completion_tokens_details: None,
+            cache_creation_input_tokens: None,
+            prompt_cache_hit_tokens: None,
+            cost_rub: None,
+        });
+        assert_eq!(details.cache_write, Some(75));
+    }
+
+    #[test]
+    fn usage_reads_deepseek_style_cache_hits_as_cache_read() {
+        let usage = Usage::from(WireUsage {
+            prompt_tokens: 1_000,
+            completion_tokens: 10,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cache_creation_input_tokens: None,
+            prompt_cache_hit_tokens: Some(300),
+            cost_rub: None,
+        });
+
+        assert_eq!(usage.cache_read, 300);
+        assert_eq!(usage.input, 700);
     }
 }

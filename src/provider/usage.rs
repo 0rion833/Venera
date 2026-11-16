@@ -4,6 +4,9 @@
 //! `input` counts only uncached prompt tokens; cached tokens are reported separately
 //! because they are billed at a different rate.
 //!
+//! `cache_write` is an `Option`: not every provider reports cache writes, and a parser
+//! that invents `0` would claim "nothing was written" when the truth is "not reported".
+//!
 //! The cost counter reads this struct after every turn; `cache_read` growth is the signal
 //! that the request prefix stayed stable.
 
@@ -21,14 +24,14 @@ pub struct Usage {
     pub reasoning: u64,
     /// Prompt tokens served from the provider cache.
     pub cache_read: u64,
-    /// Prompt tokens written to the provider cache.
-    pub cache_write: u64,
+    /// Prompt tokens written to the provider cache; `None` when the provider does not say.
+    pub cache_write: Option<u64>,
 }
 
 impl Usage {
     /// All prompt tokens, cached or not.
     pub fn prompt_tokens(&self) -> u64 {
-        self.input + self.cache_read + self.cache_write
+        self.input + self.cache_read + self.cache_write.unwrap_or(0)
     }
 
     /// Prompt plus completion tokens.
@@ -63,12 +66,25 @@ mod tests {
         let usage = Usage {
             input: 10,
             cache_read: 20,
-            cache_write: 30,
+            cache_write: Some(30),
             output: 5,
             reasoning: 4,
         };
 
         assert_eq!(usage.prompt_tokens(), 60);
         assert_eq!(usage.total_tokens(), 65);
+    }
+
+    #[test]
+    fn an_unreported_cache_write_is_not_counted_as_zero_written() {
+        let usage = Usage {
+            input: 10,
+            cache_read: 20,
+            cache_write: None,
+            ..Usage::default()
+        };
+
+        assert_eq!(usage.cache_write, None, "not reported is not zero");
+        assert_eq!(usage.prompt_tokens(), 30);
     }
 }

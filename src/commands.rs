@@ -81,6 +81,8 @@ pub enum Action {
         /// Substring of an id or a name.
         filter: Option<String>,
     },
+    /// Download the model catalog of every supported aggregator.
+    Install,
     /// Choose a model; without a name the picker opens.
     Model {
         /// Model key, id, or short name.
@@ -228,6 +230,11 @@ pub const SPECS: &[Spec] = &[
         description: "list available models",
     },
     Spec {
+        name: "install",
+        usage: "",
+        description: "download the model catalog of every aggregator",
+    },
+    Spec {
         name: "provider",
         usage: "[id]",
         description: "choose an aggregator and its API key",
@@ -365,6 +372,7 @@ pub fn parse(line: &str) -> Action {
         "models" => Action::Models {
             filter: optional_text(&args),
         },
+        "install" => Action::Install,
         "provider" | "providers" => Action::Providers {
             name: optional_text(&args),
         },
@@ -444,6 +452,7 @@ mod tests {
         assert_eq!(parse("/quit"), Action::Quit);
         assert_eq!(parse("/q"), Action::Quit);
         assert_eq!(parse("/cache"), Action::Cache);
+        assert_eq!(parse("/install"), Action::Install);
         assert_eq!(parse("/index --force"), Action::Index { force: true });
     }
 

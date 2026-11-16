@@ -49,6 +49,12 @@ impl ContextRequest {
     }
 }
 
+/// Pseudo-source marking a context that embeds the project map.
+///
+/// It never reaches [`ContextOutput::sources`]: `prepare` strips it and records
+/// [`ContextOutput::map_included`] instead.
+pub const MAP_SOURCE: &str = "<project-map>";
+
 /// Prepared context and the accounting behind it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextOutput {
@@ -70,6 +76,13 @@ pub struct ContextOutput {
     pub segments: usize,
     /// Files the context came from.
     pub sources: Vec<String>,
+    /// True when the context contains the project map.
+    ///
+    /// The map is derived from the whole project, so an entry containing it cannot be
+    /// validated against its listed sources alone: changing a file outside them changes
+    /// the map too. Such entries are generation-bound in the cache instead.
+    #[serde(default)]
+    pub map_included: bool,
     /// Tokens the preservation check could not find; empty when it passed.
     pub validation_missing: Vec<String>,
     /// True when the final context exceeds the requested token budget after fallbacks.
@@ -242,14 +255,22 @@ impl Distributor {
 
             ExecutionStrategy::IndexedRetrieval => self.read_indexed(engine, chosen, request),
 
-            ExecutionStrategy::ProjectMap => self.read_map(engine, request, Vec::new()),
+            ExecutionStrategy::ProjectMap => {
+                let (segments, mut sources) = self.read_map(engine, request, Vec::new())?;
+                sources.push(MAP_SOURCE.to_owned());
+                Ok((segments, sources))
+            }
 
             ExecutionStrategy::Hybrid => {
                 let (mut segments, a) = self.read_indexed(engine, chosen, request)?;
                 let (map, b) = self.read_map(engine, request, Vec::new())?;
+                let map_included = !map.is_empty();
                 segments.extend(map);
                 let mut sources = a;
                 sources.extend(b);
+                if map_included {
+                    sources.push(MAP_SOURCE.to_owned());
+                }
                 Ok((segments, sources))
             }
         }
@@ -432,13 +453,20 @@ impl Distributor {
     ) -> Result<ContextOutput, ContextError> {
         let encoded = serde_json::to_string(&output)?;
         let generation = engine.store().generation()?;
+        // An entry that embeds the project map depends on the whole project, not only on
+        // its listed files: record no sources so the generation alone validates it.
+        let cache_sources: &[String] = if output.map_included {
+            &[]
+        } else {
+            &output.sources
+        };
         self.cache.put(
             engine.store(),
             key,
             &encoded,
             output.final_tokens,
             generation,
-            &output.sources,
+            cache_sources,
         )?;
         Ok(output)
     }
@@ -476,6 +504,8 @@ impl ContextProvider for Distributor {
                 allow_expansion: self.allow_expansion,
                 prefer_partial: self.prefer_partial,
                 avoid_map_for_direct: self.avoid_map_for_direct,
+                budget_window: self.budget.window,
+                budget_reserve_output: self.budget.reserve_output,
             },
         );
 
@@ -487,7 +517,11 @@ impl ContextProvider for Distributor {
             return Ok(cached);
         }
 
-        let (mut segments, sources) = self.retrieve(engine, &chosen, request)?;
+        let (mut segments, mut sources) = self.retrieve(engine, &chosen, request)?;
+        // The map is derived from the whole project, so an entry that embeds it cannot be
+        // validated by the listed sources alone: a change anywhere changes the map.
+        let map_included = sources.iter().any(|source| source == MAP_SOURCE);
+        sources.retain(|source| source != MAP_SOURCE);
 
         // Retrieval that finds nothing must not produce empty context: the request text
         // itself is then the context worth compressing.
@@ -531,6 +565,7 @@ impl ContextProvider for Distributor {
                     },
                     segments: segments.len(),
                     sources,
+                    map_included: false,
                     validation_missing: Vec::new(),
                     budget_exceeded: false,
                 };
@@ -634,6 +669,7 @@ impl ContextProvider for Distributor {
             compression: compressed.stats,
             segments: compressed.kept.len(),
             sources,
+            map_included,
             validation_missing: missing,
             budget_exceeded: exceeds_budget,
         };
@@ -759,6 +795,38 @@ mod tests {
     }
 
     #[test]
+    fn a_hybrid_context_that_embeds_the_map_is_generation_bound() {
+        let (dir, engine) = site();
+        let request = ContextRequest {
+            input: "compare src/auth.rs and src/main.rs".to_owned(),
+            max_tokens: 2_000,
+            compression: CompressionLevel::None,
+            strategy: Some(ExecutionStrategy::Hybrid),
+        };
+
+        let first = distributor().prepare(&engine, &request).expect("first");
+        assert_eq!(first.strategy, ExecutionStrategy::Hybrid);
+        assert!(first.map_included, "the map is part of a hybrid answer");
+
+        // A new file changes the map but none of the listed sources.
+        std::fs::write(dir.path().join("src/billing.rs"), "pub fn charge() {}\n").expect("write");
+        refresh(engine.store(), dir.path(), &RefreshOptions::default()).expect("refresh");
+
+        // A fresh distributor has an empty M0, so any hit would come from stale M1.
+        let after = distributor().prepare(&engine, &request).expect("second");
+
+        assert_eq!(
+            after.cache_misses, 1,
+            "a changed map must not be a cache hit"
+        );
+        assert!(
+            after.content.contains("billing"),
+            "the map must be rebuilt with the new file: {}",
+            after.content
+        );
+    }
+
+    #[test]
     fn a_repeated_request_is_served_from_cache() {
         let (_dir, engine) = site();
         let mut distributor = distributor();
@@ -792,6 +860,38 @@ mod tests {
 
         assert_eq!(after.cache_misses, 1, "the generation changed");
         assert!(after.content.contains("other"));
+    }
+
+    #[test]
+    fn a_single_file_reindex_invalidates_the_runtime_cache() {
+        // `Engine::source` reindexes one changed file without a full project refresh.
+        // Before the generation bump that path left the M0 entry matching, so the next
+        // identical request served the pre-edit context.
+        let (dir, engine) = site();
+        let mut distributor = distributor();
+        let request = ContextRequest::new("read src/auth.rs", 1000);
+
+        let first = distributor.prepare(&engine, &request).expect("first");
+        assert!(first.content.contains("secret"));
+
+        std::fs::write(
+            dir.path().join("src/auth.rs"),
+            "pub fn authenticate(token: &str) -> bool {\n    token == \"public\"\n}\n\npub fn logout() {}\n",
+        )
+        .expect("write");
+
+        let view = engine.source("src/auth.rs", None, None).expect("source");
+        assert!(view.refreshed, "the changed file must be reindexed");
+        assert!(view.text.contains("public"));
+
+        let after = distributor.prepare(&engine, &request).expect("second");
+
+        assert_eq!(after.cache_misses, 1, "a reindexed file must invalidate M0");
+        assert!(
+            after.content.contains("public"),
+            "stale context was served: {}",
+            after.content
+        );
     }
 
     #[test]

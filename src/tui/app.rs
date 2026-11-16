@@ -1014,6 +1014,7 @@ impl App {
                     self.picker = Some(picker);
                 }
             }
+            Action::Install => self.install_models(),
             Action::Model { name } => match name {
                 Some(name) => self.apply_model(&name),
                 None => self.open_picker(),
@@ -1274,6 +1275,19 @@ impl App {
             return;
         }
         self.job = Some(job::catalog(provider));
+    }
+
+    /// `/install`: downloads the catalog of every provider in the background.
+    fn install_models(&mut self) {
+        if self.job.is_some() {
+            self.push_error("дождись текущей задачи");
+            return;
+        }
+        self.job = Some(job::install());
+        self.session.push(
+            EntryKind::System,
+            "обновляю каталоги всех провайдеров…".to_owned(),
+        );
     }
 
     fn key_detail(provider: &str) -> String {
@@ -2014,6 +2028,15 @@ impl App {
                         format!("каталог {title}: {count} моделей · /models"),
                     );
                 }
+            }
+            JobDone::Install { providers, models } => {
+                self.catalog = Catalog::load_cached_for(&self.vendor).ok().flatten();
+                self.session.push(
+                    EntryKind::System,
+                    format!(
+                        "каталоги обновлены: {providers} провайдеров · {models} моделей · /models"
+                    ),
+                );
             }
             JobDone::Failed(error) => self.push_error(&error),
         }
